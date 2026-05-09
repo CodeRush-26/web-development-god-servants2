@@ -212,7 +212,8 @@ export default function App() {
   useEffect(() => {
     const loadPlaybackHistory = async () => {
       try {
-        const res = await fetch("http://localhost:4000/api/playback");
+        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+        const res = await fetch(`${API_URL}/api/playback`);
         if (!res.ok) return;
         const data = await res.json();
         const snaps = Array.isArray(data?.snapshots) ? data.snapshots : [];
@@ -231,9 +232,10 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const loadWeather = async () => {
+    const fetchWeather = async () => {
       try {
-        const res = await fetch("http://localhost:4000/api/weather");
+        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+        const res = await fetch(`${API_URL}/api/weather`);
         if (!res.ok) return;
         const data = await res.json();
         if (!active) return;
@@ -315,7 +317,8 @@ export default function App() {
             setPlaybackTimestamp(ts);
             setIsPlaybackMode(true);
             try {
-              const res = await fetch(`http://localhost:4000/api/playback/${ts}`);
+              const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+              const res = await fetch(`${API_URL}/api/playback/${ts}`);
               if (!res.ok) return;
               const data = await res.json();
               const snap = data?.snapshot;
@@ -392,7 +395,8 @@ export default function App() {
           setPlaybackTimestamp(ts);
           setIsPlaybackMode(true);
           try {
-            const res = await fetch(`http://localhost:4000/api/playback/${ts}`);
+            const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+            const res = await fetch(`${API_URL}/api/playback/${ts}`);
             if (!res.ok) return;
             const data = await res.json();
             const snap = data?.snapshot;
