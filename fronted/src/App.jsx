@@ -21,6 +21,16 @@ function sanitizeShip(raw, index = 0) {
     fuel: Number.isFinite(Number(raw?.fuel)) ? Number(raw.fuel) : 0,
     cargo: raw?.cargo ? String(raw.cargo) : "N/A",
     status: raw?.status ? String(raw.status) : "unknown",
+    routeWaypoints: Array.isArray(raw?.routeWaypoints)
+      ? raw.routeWaypoints
+          .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
+          .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      : [],
+    fuelPerKm: Number.isFinite(Number(raw?.fuelPerKm)) ? Number(raw.fuelPerKm) : 0.04,
+    distanceToDestinationKm: Number.isFinite(Number(raw?.distanceToDestinationKm))
+      ? Number(raw.distanceToDestinationKm)
+      : 0,
+    insufficientFuel: !!raw?.insufficientFuel,
   };
 }
 
@@ -73,6 +83,7 @@ export default function App() {
   const [directiveResponses, setDirectiveResponses] = useState([]);
   const [zones, setZones] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [weatherCells, setWeatherCells] = useState([]);
   const [isDrawingZone, setIsDrawingZone] = useState(false);
   const [connectionState, setConnectionState] = useState("connecting");
   const [toasts, setToasts] = useState([]);
@@ -185,6 +196,27 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    const loadWeather = async () => {
+      try {
+        const res = await fetch("http://localhost:4000/api/weather");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active) return;
+        setWeatherCells(Array.isArray(data?.cells) ? data.cells : []);
+      } catch {
+        // ignore transient weather fetch errors
+      }
+    };
+    loadWeather();
+    const id = window.setInterval(loadWeather, 10 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
   const stats = useMemo(() => countByStatus(fleetData.ships), [fleetData.ships]);
   const selectedShip = useMemo(
     () => fleetData.ships.find((s) => s.id === selectedShipId) || null,
@@ -230,6 +262,7 @@ export default function App() {
           hasRespondedToDirective={hasRespondedToDirective}
           connectionState={connectionState}
           zones={zones}
+          weatherCells={weatherCells}
           onRespond={(payload) => socket.emit("directive:response", payload)}
           onLogout={() => {
             setSession(null);
@@ -251,6 +284,7 @@ export default function App() {
         pendingDirectives={pendingDirectives}
         zones={zones}
         alerts={alerts}
+        weatherCells={weatherCells}
         isDrawingZone={isDrawingZone}
         onStartDrawingZone={() => setIsDrawingZone(true)}
         onFinishDrawingZone={() => setIsDrawingZone(false)}

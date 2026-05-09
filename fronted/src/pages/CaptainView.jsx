@@ -8,6 +8,7 @@ export default function CaptainView({
   hasRespondedToDirective,
   connectionState,
   zones,
+  weatherCells,
   onRespond,
   onLogout,
 }) {
@@ -28,6 +29,7 @@ export default function CaptainView({
           fleetData={singleFleetData}
           selectedShipId={shipId}
           onSelectShip={() => {}}
+          weatherCells={weatherCells}
           zones={zones}
           role="captain"
         />

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import FleetMap from "../map/FleetMap";
 import ShipList from "../components/ShipList";
 import AlertPanel from "../alerts/AlertPanel";
+import ShipDetail from "../components/ShipDetail";
 
 export default function CommandView({
   fleetData,
@@ -22,6 +23,7 @@ export default function CommandView({
   onRemoveZone,
   onAcknowledgeAlert,
   onLogout,
+  weatherCells,
 }) {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -59,7 +61,10 @@ export default function CommandView({
         {!leftCollapsed ? (
           <ShipList ships={fleetData.ships} selectedShipId={selectedShipId} onSelectShip={onSelectShip} />
         ) : (
-          <div className="collapsed-label" style={{ padding: 10, writingMode: "vertical-rl" }}>
+          <div
+            className="collapsed-label"
+            style={{ padding: 10, writingMode: "vertical-rl", marginInline: "auto" }}
+          >
             Fleet
           </div>
         )}
@@ -70,6 +75,7 @@ export default function CommandView({
           fleetData={fleetData}
           selectedShipId={selectedShipId}
           onSelectShip={onSelectShip}
+          weatherCells={weatherCells}
           zones={zones}
           role="command"
           isDrawingZone={isDrawingZone}
@@ -81,7 +87,14 @@ export default function CommandView({
         />
       </main>
 
-      <aside className="panel panel-right" style={{ overflow: "hidden", position: "relative" }}>
+      <aside
+        className="panel panel-right"
+        style={{
+          overflowX: "hidden",
+          overflowY: rightCollapsed ? "hidden" : "auto",
+          position: "relative",
+        }}
+      >
         <button
           type="button"
           onClick={() => setRightCollapsed((v) => !v)}
@@ -122,21 +135,24 @@ export default function CommandView({
           {stats.distressed || 0} | Stopped {stats.stopped || 0} | Arrived {stats.arrived || 0}
         </div>
 
-        <h4 style={{ margin: "0 0 8px" }}>Send Directive</h4>
+        <h4 style={{ margin: "0 0 8px" }}>Ship Instructions</h4>
         <div className="muted small" style={{ marginBottom: 8 }}>
-          Target: {selectedShip?.name || "Select a ship"}
+          Selected ship: {selectedShip?.name || "Select a ship from left panel"}
+        </div>
+        <div className="muted small" style={{ marginBottom: 8 }}>
+          Choose action and press Send.
         </div>
         <div className="input-stack">
         <select
           value={form.type}
           onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
         >
-          <option value="REROUTE">REROUTE</option>
-          <option value="HOLD_POSITION">HOLD_POSITION</option>
+          <option value="REROUTE">Change route (Reroute)</option>
+          <option value="HOLD_POSITION">Stop ship (Hold position)</option>
         </select>
         <input
           type="text"
-          placeholder="Directive message"
+          placeholder="Reason / note for captain"
           value={form.message}
           onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
         />
@@ -144,21 +160,21 @@ export default function CommandView({
           <>
             <input
               type="text"
-              placeholder="Destination name"
+              placeholder="New destination name"
               value={form.destinationName}
               onChange={(e) => setForm((f) => ({ ...f, destinationName: e.target.value }))}
             />
             <input
               type="number"
               step="any"
-              placeholder="Destination lat"
+              placeholder="New destination latitude"
               value={form.destinationLat}
               onChange={(e) => setForm((f) => ({ ...f, destinationLat: e.target.value }))}
             />
             <input
               type="number"
               step="any"
-              placeholder="Destination lng"
+              placeholder="New destination longitude"
               value={form.destinationLng}
               onChange={(e) => setForm((f) => ({ ...f, destinationLng: e.target.value }))}
             />
@@ -179,7 +195,7 @@ export default function CommandView({
           className="btn-primary"
           style={{ width: "100%" }}
         >
-          Send directive
+          Send instruction
         </button>
 
         <h4 style={{ margin: "16px 0 8px" }}>Latest Responses</h4>
@@ -194,11 +210,12 @@ export default function CommandView({
           ))}
         </div>
         <AlertPanel alerts={alerts} onAcknowledge={onAcknowledgeAlert} />
+        <ShipDetail ship={selectedShip} />
           </>
         ) : (
           <div
             className="collapsed-label"
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", marginInline: "auto" }}
           >
             Command
           </div>

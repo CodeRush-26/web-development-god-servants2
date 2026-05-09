@@ -74,12 +74,20 @@ body,
 
 .collapsed-label {
   margin-top: 46px;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #1e293b;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: #0f172a;
   text-transform: uppercase;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+  border: 1px solid #c9d7ee;
+  border-radius: 10px;
+  padding: 10px 6px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
 }
 
 .panel-title-row {

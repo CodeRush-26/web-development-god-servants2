@@ -41,7 +41,7 @@ function runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting) {
   io.emit("fleet:update", getFleetSnapshot());
 }
 
-function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting) {
+function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones) {
   if (!geofenceLoopStarted) {
     geofenceLoopStarted = true;
     setInterval(() => runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting), 1000);
@@ -95,6 +95,7 @@ function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting) {
 
       zones.unshift(zone);
       if (zones.length > 50) zones.length = 50;
+      if (typeof setRestrictedZones === "function") setRestrictedZones(zones);
       io.emit("zone:added", zone);
       runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting);
     });
@@ -105,6 +106,7 @@ function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting) {
       const idx = zones.findIndex((z) => z.id === zoneId);
       if (idx < 0) return;
       zones.splice(idx, 1);
+      if (typeof setRestrictedZones === "function") setRestrictedZones(zones);
       insidePairs = new Set(Array.from(insidePairs).filter((key) => !key.endsWith(`::${zoneId}`)));
       for (let i = alerts.length - 1; i >= 0; i -= 1) {
         if (alerts[i]?.zoneId === zoneId) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import ZoneDrawer from "./ZoneDrawer";
+import { renderWeatherLayer } from "./WeatherLayer";
 
 const MAP_CENTER = [25.9, 57.3];
 const TICK_MS = 1000;
@@ -99,6 +100,7 @@ export default function FleetMap({
   onCancelDrawingZone,
   onAddZone,
   onRemoveZone,
+  weatherCells = [],
 }) {
   const ships = useMemo(() => {
     const raw = Array.isArray(fleetData?.ships) ? fleetData.ships : [];
@@ -130,6 +132,8 @@ export default function FleetMap({
   const drawLineRef = useRef(null);
   const drawGuideLineRef = useRef(null);
   const drawPointMarkersRef = useRef([]);
+  const weatherLayerRef = useRef(null);
+  const routeLineRef = useRef(null);
   const [drawPointCount, setDrawPointCount] = useState(0);
 
   useEffect(() => {
@@ -148,6 +152,12 @@ export default function FleetMap({
       mapRef.current = null;
       markerRef.current.clear();
       zoneLayerRef.current.clear();
+      if (weatherLayerRef.current) {
+        map.removeLayer(weatherLayerRef.current);
+      }
+      if (routeLineRef.current) {
+        map.removeLayer(routeLineRef.current);
+      }
     };
   }, []);
 
@@ -381,6 +391,35 @@ export default function FleetMap({
     if (!selected || !Number.isFinite(selected.lat) || !Number.isFinite(selected.lng)) return;
     map.flyTo([selected.lat, selected.lng], Math.max(map.getZoom(), 8), { duration: 0.8 });
   }, [selectedShipId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    renderWeatherLayer({ map, cells: weatherCells, layerRef: weatherLayerRef });
+  }, [weatherCells]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (routeLineRef.current) {
+      map.removeLayer(routeLineRef.current);
+      routeLineRef.current = null;
+    }
+    if (!selectedShipId) return;
+    const ship = ships.find((s) => s.id === selectedShipId);
+    if (!ship || !Array.isArray(ship.routeWaypoints) || !ship.routeWaypoints.length) return;
+    const path = [
+      [ship.lat, ship.lng],
+      ...ship.routeWaypoints.map((wp) => [Number(wp.lat), Number(wp.lng)]),
+    ].filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+    if (path.length < 2) return;
+    routeLineRef.current = L.polyline(path, {
+      color: "#0ea5e9",
+      weight: 3,
+      dashArray: "8,6",
+      opacity: 0.9,
+    }).addTo(map);
+  }, [selectedShipId, ships]);
 
   return (
     <div style={{ position: "relative", height: "100vh", width: "100%" }}>

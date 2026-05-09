@@ -6,11 +6,15 @@ const {
   normalizeHeading,
   shortestTurn,
 } = require("./utils");
+const { computeRoute } = require("./router");
+const { fetchOpenMeteoWeather, isAdverseWeather } = require("./weather");
 
 const DEFAULT_TICK_MS = 1000;
 const ARRIVAL_DISTANCE_KM = 0.5;
 const MAX_TURN_DEG_PER_TICK = 2;
 const FUEL_BURN_PER_TICK = 0.005; // % per tick at 1Hz (tune for demo)
+const ROUTE_REACH_KM = 0.1;
+const FUEL_PER_KM_BASE = 0.04;
 
 // Optional bounding box to keep demo visually alive (Strait of Hormuz-ish)
 const BOUNDS = {
@@ -23,6 +27,7 @@ const BOUNDS = {
 let fleetState = initialFleet.map((s) => ({ ...s }));
 let tick = 0;
 let intervalHandle = null;
+let restrictedZones = [];
 
 // Central sea lane through Strait of Hormuz and Gulf of Oman.
 // Ships are constrained to stay near this lane (buffer in degrees).
@@ -110,6 +115,17 @@ function updateShip(ship, deltaSeconds) {
     return ship;
   }
 
+  const destination = {
+    lat: Number(ship.destinationLat),
+    lng: Number(ship.destinationLng),
+  };
+  if (!Array.isArray(ship.routeWaypoints) || ship.routeWaypoints.length === 0 || ship.status === "rerouting") {
+    const route = computeRoute(ship, destination, restrictedZones);
+    ship.routeWaypoints = route.waypoints || [];
+    ship.routeDistanceKm = Number(route.distanceKm || 0);
+    ship.status = route.status === "stranded" ? "stranded" : ship.status === "rerouting" ? "rerouting" : "normal";
+  }
+
   // arrival check first (in case ship spawns close)
   const distKm = getDistance(
     ship.lat,
@@ -125,8 +141,16 @@ function updateShip(ship, deltaSeconds) {
     return ship;
   }
 
-  // fuel burn
-  ship.fuel = clamp(ship.fuel - FUEL_BURN_PER_TICK, 0, 100);
+  const nextWp = ship.routeWaypoints?.[0] || destination;
+  const adverse = isAdverseWeather(ship.lat, ship.lng);
+  const fuelPenalty = adverse ? 1.3 : 1;
+  const currentSpeed = Math.max(0, Number(ship.speed) || 0);
+  // Knots are nautical miles per hour. Convert tick duration to hours.
+  const distThisTickKm = currentSpeed * 1.852 * (deltaSeconds / 3600);
+  const fuelBurn = Math.max(FUEL_BURN_PER_TICK, distThisTickKm * FUEL_PER_KM_BASE * fuelPenalty);
+  ship.fuel = clamp(ship.fuel - fuelBurn, 0, 100);
+  ship.weatherAdverse = adverse;
+  ship.fuelPerKm = FUEL_PER_KM_BASE * fuelPenalty;
   if (ship.fuel <= 0) {
     ship.status = "stopped";
     ship.speed = 0;
@@ -137,8 +161,8 @@ function updateShip(ship, deltaSeconds) {
   const desired = getBearing(
     ship.lat,
     ship.lng,
-    ship.destinationLat,
-    ship.destinationLng
+    nextWp.lat,
+    nextWp.lng
   );
   const turn = clamp(
     shortestTurn(ship.heading, desired),
@@ -157,6 +181,21 @@ function updateShip(ship, deltaSeconds) {
     snapToSeaLane(ship);
     ship.status = ship.status === "arrived" ? "arrived" : "rerouting";
   }
+  if (ship.routeWaypoints?.length) {
+    const wp = ship.routeWaypoints[0];
+    const dWp = getDistance(ship.lat, ship.lng, wp.lat, wp.lng);
+    if (dWp <= ROUTE_REACH_KM) {
+      ship.routeWaypoints.shift();
+    }
+  }
+  ship.distanceToDestinationKm = getDistance(
+    ship.lat,
+    ship.lng,
+    Number(ship.destinationLat),
+    Number(ship.destinationLng)
+  );
+  ship.fuelRangeKm = ship.fuelPerKm > 0 ? ship.fuel / ship.fuelPerKm : 0;
+  ship.insufficientFuel = ship.fuelRangeKm + 0.1 < ship.distanceToDestinationKm;
   return ship;
 }
 
@@ -224,16 +263,22 @@ function markShipsRerouting(shipIds = []) {
   return changed;
 }
 
+function setRestrictedZones(zones = []) {
+  restrictedZones = Array.isArray(zones) ? zones : [];
+  fleetState = fleetState.map((ship) => ({ ...ship, status: "rerouting" }));
+}
+
 function startSimulator(io, options = {}) {
   const tickMs = typeof options.tickMs === "number" ? options.tickMs : DEFAULT_TICK_MS;
 
   if (intervalHandle) {
-    return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting };
+    return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones };
   }
 
   intervalHandle = setInterval(() => {
     tick += 1;
     const deltaSeconds = tickMs / 1000;
+    fetchOpenMeteoWeather();
     fleetState = fleetState.map((ship) => updateShip({ ...ship }, deltaSeconds));
 
     if (io) {
@@ -241,7 +286,7 @@ function startSimulator(io, options = {}) {
     }
   }, tickMs);
 
-  return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting };
+  return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones };
 }
 
 fleetState = fleetState.map((ship) => {
@@ -264,5 +309,6 @@ module.exports = {
   getFleetSnapshot,
   applyDirective,
   markShipsRerouting,
+  setRestrictedZones,
 };
 
