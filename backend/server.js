@@ -6,6 +6,8 @@ const { Server } = require("socket.io");
 const { initSocket } = require("./socket");
 const { createShipsRouter } = require("./routes/ships");
 const { createWeatherRouter } = require("./routes/weather");
+const { createAiRouter } = require("./routes/ai");
+const { createPlaybackRouter } = require("./routes/playback");
 const { startSimulator } = require("./simulator/simulator");
 
 const PORT = process.env.PORT || 4000;
@@ -41,6 +43,11 @@ initSocket(
 
 app.use("/api/ships", createShipsRouter(simulator.getFleetSnapshot));
 app.use("/api/weather", createWeatherRouter());
+app.use("/api/ai", createAiRouter());
+app.use(
+  "/api/playback",
+  createPlaybackRouter(simulator.getPlaybackHistory, simulator.getPlaybackSnapshotAt)
+);
 
 server.listen(PORT, () => {
   console.log(`Server running, simulator started on port ${PORT}`);

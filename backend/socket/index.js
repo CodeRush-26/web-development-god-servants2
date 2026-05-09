@@ -1,10 +1,13 @@
 const { checkAllShips } = require("../simulator/geofence");
+const { checkProximity } = require("../simulator/proximity");
+const { analyzeDistressMessage } = require("../routes/ai");
 
 const pendingDirectives = [];
 const directiveResponses = [];
 const zones = [];
 const alerts = [];
 let insidePairs = new Set();
+let warnedProximityPairs = new Set();
 let geofenceLoopStarted = false;
 
 function makeAlertFromBreach(breach) {
@@ -41,10 +44,39 @@ function runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting) {
   io.emit("fleet:update", getFleetSnapshot());
 }
 
+function runProximityCheck(io, getFleetSnapshot) {
+  if (typeof getFleetSnapshot !== "function") return;
+  const snapshot = getFleetSnapshot();
+  const warnings = checkProximity(snapshot?.ships || [], 2);
+  const currentPairs = new Set(warnings.map((w) => w.key));
+
+  warnings.forEach((w) => {
+    if (warnedProximityPairs.has(w.key)) return;
+    const alert = {
+      id: `alert_px_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: "PROXIMITY_WARNING",
+      shipA: w.shipA,
+      shipB: w.shipB,
+      message: `${w.shipA} and ${w.shipB} are ${w.distanceKm} km apart`,
+      acknowledged: false,
+      createdAt: Date.now(),
+    };
+    alerts.unshift(alert);
+    if (alerts.length > 500) alerts.length = 500;
+    io.emit("proximity:warning", alert);
+    io.emit("alert:new", alert);
+  });
+
+  warnedProximityPairs = currentPairs;
+}
+
 function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones) {
   if (!geofenceLoopStarted) {
     geofenceLoopStarted = true;
-    setInterval(() => runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting), 1000);
+    setInterval(() => {
+      runGeofenceCheck(io, getFleetSnapshot, markShipsRerouting);
+      runProximityCheck(io, getFleetSnapshot);
+    }, 1000);
   }
 
   io.on("connection", (socket) => {
@@ -144,6 +176,34 @@ function initSocket(io, getFleetSnapshot, applyDirective, markShipsRerouting, se
       io.emit("directive:response", event);
       if (typeof getFleetSnapshot === "function") {
         io.emit("fleet:update", getFleetSnapshot());
+      }
+
+      if (action === "ESCALATE_DISTRESS") {
+        (async () => {
+          const analysis = await analyzeDistressMessage({
+            shipId,
+            message: event.message || "",
+          });
+          const distressEvent = {
+            id: `dist_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            type: "DISTRESS",
+            shipId,
+            message: event.message || "",
+            severity: analysis.severity || "LOW",
+            issueType: analysis.issueType || "UNKNOWN",
+            injuryCount: Number.isFinite(Number(analysis.injuryCount)) ? Number(analysis.injuryCount) : 0,
+            damageEstimate: analysis.damageEstimate || "unknown",
+            aiSource: analysis.source || "fallback",
+            aiModel: analysis.model || "heuristic-v1",
+            recommendedAction: analysis.recommendedAction || "",
+            acknowledged: false,
+            createdAt: Date.now(),
+          };
+          alerts.unshift(distressEvent);
+          if (alerts.length > 500) alerts.length = 500;
+          io.emit("distress:analyzed", distressEvent);
+          io.emit("alert:new", distressEvent);
+        })();
       }
     });
 

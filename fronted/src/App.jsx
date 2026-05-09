@@ -4,6 +4,7 @@ import Login from "./pages/Login";
 import CommandView from "./pages/CommandView";
 import CaptainView from "./pages/CaptainView";
 import ToastStack from "./components/ToastStack";
+import Timeline from "./components/Timeline";
 
 function sanitizeShip(raw, index = 0) {
   const lat = Number(raw?.lat);
@@ -84,6 +85,10 @@ export default function App() {
   const [zones, setZones] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [weatherCells, setWeatherCells] = useState([]);
+  const [playbackHistory, setPlaybackHistory] = useState([]);
+  const [isPlaybackMode, setIsPlaybackMode] = useState(false);
+  const [playbackTimestamp, setPlaybackTimestamp] = useState(null);
+  const [playbackFleetData, setPlaybackFleetData] = useState(null);
   const [isDrawingZone, setIsDrawingZone] = useState(false);
   const [connectionState, setConnectionState] = useState("connecting");
   const [toasts, setToasts] = useState([]);
@@ -164,8 +169,15 @@ export default function App() {
     });
     socket.on("alert:new", (alert) => {
       setAlerts((prev) => mergeUniqueById(prev, [alert]).slice(0, 300));
-      pushToast("Geofence breach", `${alert.shipId} entered ${alert.zoneId}`);
+      if (alert.type === "DISTRESS") {
+        pushToast("Distress analyzed", `${alert.shipId} - ${alert.severity} severity`);
+      } else {
+        pushToast("Geofence breach", `${alert.shipId} entered ${alert.zoneId}`);
+      }
       beep();
+    });
+    socket.on("distress:analyzed", (alert) => {
+      setAlerts((prev) => mergeUniqueById(prev, [alert]).slice(0, 300));
     });
     socket.on("alert:acked", ({ alertId, acknowledgedAt }) => {
       setAlerts((prev) =>
@@ -192,9 +204,30 @@ export default function App() {
       socket.off("zone:removed");
       socket.off("alert:sync");
       socket.off("alert:new");
+      socket.off("distress:analyzed");
       socket.off("alert:acked");
     };
   }, []);
+
+  useEffect(() => {
+    const loadPlaybackHistory = async () => {
+      try {
+        const res = await fetch("http://localhost:4000/api/playback");
+        if (!res.ok) return;
+        const data = await res.json();
+        const snaps = Array.isArray(data?.snapshots) ? data.snapshots : [];
+        setPlaybackHistory(snaps);
+        if (snaps[0]?.timestamp && playbackTimestamp == null) {
+          setPlaybackTimestamp(snaps[0].timestamp);
+        }
+      } catch {
+        // ignore for now
+      }
+    };
+    loadPlaybackHistory();
+    const id = window.setInterval(loadPlaybackHistory, 30 * 1000);
+    return () => window.clearInterval(id);
+  }, [playbackTimestamp]);
 
   useEffect(() => {
     let active = true;
@@ -217,10 +250,11 @@ export default function App() {
     };
   }, []);
 
-  const stats = useMemo(() => countByStatus(fleetData.ships), [fleetData.ships]);
+  const activeFleetData = isPlaybackMode && playbackFleetData ? playbackFleetData : fleetData;
+  const activeStats = useMemo(() => countByStatus(activeFleetData.ships), [activeFleetData.ships]);
   const selectedShip = useMemo(
-    () => fleetData.ships.find((s) => s.id === selectedShipId) || null,
-    [fleetData.ships, selectedShipId]
+    () => activeFleetData.ships.find((s) => s.id === selectedShipId) || null,
+    [activeFleetData.ships, selectedShipId]
   );
 
   if (!session?.role) {
@@ -256,18 +290,44 @@ export default function App() {
     return (
       <>
         <CaptainView
-          fleetData={fleetData}
+          fleetData={activeFleetData}
           shipId={shipId}
           pendingDirective={pendingDirective}
           hasRespondedToDirective={hasRespondedToDirective}
           connectionState={connectionState}
           zones={zones}
           weatherCells={weatherCells}
-          onRespond={(payload) => socket.emit("directive:response", payload)}
+          onRespond={(payload) => {
+            if (isPlaybackMode) return;
+            socket.emit("directive:response", payload);
+          }}
           onLogout={() => {
             setSession(null);
             localStorage.removeItem("role");
             localStorage.removeItem("shipId");
+          }}
+        />
+        <Timeline
+          history={playbackHistory}
+          isPlaybackMode={isPlaybackMode}
+          playbackTimestamp={playbackTimestamp}
+          onScrub={async (ts) => {
+            setPlaybackTimestamp(ts);
+            setIsPlaybackMode(true);
+            try {
+              const res = await fetch(`http://localhost:4000/api/playback/${ts}`);
+              if (!res.ok) return;
+              const data = await res.json();
+              const snap = data?.snapshot;
+              if (!snap) return;
+              setPlaybackFleetData(sanitizeFleetPayload(snap));
+            } catch {
+              // ignore
+            }
+          }}
+          onBackToLive={() => {
+            setIsPlaybackMode(false);
+            setPlaybackFleetData(null);
           }}
         />
         <ToastStack toasts={toasts} />
@@ -278,40 +338,73 @@ export default function App() {
   return (
     <>
       <CommandView
-        fleetData={fleetData}
-        stats={stats}
+        fleetData={activeFleetData}
+        stats={activeStats}
+        isPlaybackMode={isPlaybackMode}
         connectionState={connectionState}
         pendingDirectives={pendingDirectives}
         zones={zones}
         alerts={alerts}
         weatherCells={weatherCells}
         isDrawingZone={isDrawingZone}
-        onStartDrawingZone={() => setIsDrawingZone(true)}
+        onStartDrawingZone={() => {
+          if (isPlaybackMode) return;
+          setIsDrawingZone(true);
+        }}
         onFinishDrawingZone={() => setIsDrawingZone(false)}
         onCancelDrawingZone={() => setIsDrawingZone(false)}
-        onAddZone={(coords) =>
-          socket.emit("zone:add", {
-            coords,
-          })
-        }
-        onRemoveZone={(zoneId) => socket.emit("zone:remove", { zoneId })}
-        onAcknowledgeAlert={(alertId) => socket.emit("alert:ack", { alertId })}
+        onAddZone={(coords) => {
+          if (isPlaybackMode) return;
+          socket.emit("zone:add", { coords });
+        }}
+        onRemoveZone={(zoneId) => {
+          if (isPlaybackMode) return;
+          socket.emit("zone:remove", { zoneId });
+        }}
+        onAcknowledgeAlert={(alertId) => {
+          if (isPlaybackMode) return;
+          socket.emit("alert:ack", { alertId });
+        }}
         selectedShipId={selectedShipId}
         onSelectShip={setSelectedShipId}
         selectedShip={selectedShip}
-        onSendDirective={(directive) =>
+        onSendDirective={(directive) => {
+          if (isPlaybackMode) return;
           socket.emit("directive:send", {
             ...directive,
             from: "command",
             destinationLat: directive.destinationLat === "" ? undefined : Number(directive.destinationLat),
             destinationLng: directive.destinationLng === "" ? undefined : Number(directive.destinationLng),
-          })
-        }
+          });
+        }}
         directiveResponses={directiveResponses}
         onLogout={() => {
           setSession(null);
           localStorage.removeItem("role");
           localStorage.removeItem("shipId");
+        }}
+      />
+      <Timeline
+        history={playbackHistory}
+        isPlaybackMode={isPlaybackMode}
+        playbackTimestamp={playbackTimestamp}
+        onScrub={async (ts) => {
+          setPlaybackTimestamp(ts);
+          setIsPlaybackMode(true);
+          try {
+            const res = await fetch(`http://localhost:4000/api/playback/${ts}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const snap = data?.snapshot;
+            if (!snap) return;
+            setPlaybackFleetData(sanitizeFleetPayload(snap));
+          } catch {
+            // ignore
+          }
+        }}
+        onBackToLive={() => {
+          setIsPlaybackMode(false);
+          setPlaybackFleetData(null);
         }}
       />
       <ToastStack toasts={toasts} />

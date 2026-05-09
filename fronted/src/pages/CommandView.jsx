@@ -7,6 +7,7 @@ import ShipDetail from "../components/ShipDetail";
 export default function CommandView({
   fleetData,
   stats,
+  isPlaybackMode,
   connectionState,
   pendingDirectives,
   selectedShipId,
@@ -77,7 +78,7 @@ export default function CommandView({
           onSelectShip={onSelectShip}
           weatherCells={weatherCells}
           zones={zones}
-          role="command"
+          role={isPlaybackMode ? "captain" : "command"}
           isDrawingZone={isDrawingZone}
           onStartDrawingZone={onStartDrawingZone}
           onFinishDrawingZone={onFinishDrawingZone}
@@ -142,6 +143,14 @@ export default function CommandView({
         <div className="muted small" style={{ marginBottom: 8 }}>
           Choose action and press Send.
         </div>
+        {isPlaybackMode ? (
+          <div
+            className="small"
+            style={{ marginBottom: 8, color: "#92400e", background: "#fef3c7", padding: 8, borderRadius: 8 }}
+          >
+            Replay mode active: instructions are disabled until you click Back to Live.
+          </div>
+        ) : null}
         <div className="input-stack">
         <select
           value={form.type}
@@ -183,7 +192,7 @@ export default function CommandView({
         </div>
         <button
           type="button"
-          disabled={!selectedShip}
+          disabled={!selectedShip || isPlaybackMode}
           onClick={() => {
             if (!selectedShip) return;
             onSendDirective?.({

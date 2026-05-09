@@ -28,6 +28,10 @@ let fleetState = initialFleet.map((s) => ({ ...s }));
 let tick = 0;
 let intervalHandle = null;
 let restrictedZones = [];
+const historyBuffer = [];
+let lastHistoryAt = 0;
+const HISTORY_INTERVAL_MS = 30 * 1000;
+const HISTORY_MAX = 120;
 
 // Central sea lane through Strait of Hormuz and Gulf of Oman.
 // Ships are constrained to stay near this lane (buffer in degrees).
@@ -207,6 +211,34 @@ function getFleetSnapshot() {
   };
 }
 
+function addHistorySnapshot(snapshot) {
+  historyBuffer.unshift({
+    timestamp: snapshot.serverTime,
+    tick: snapshot.tick,
+    ships: snapshot.ships.map((s) => ({ ...s })),
+  });
+  if (historyBuffer.length > HISTORY_MAX) historyBuffer.length = HISTORY_MAX;
+}
+
+function getPlaybackHistory() {
+  return historyBuffer.slice();
+}
+
+function getPlaybackSnapshotAt(timestamp) {
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || historyBuffer.length === 0) return null;
+  let best = historyBuffer[0];
+  let bestDiff = Math.abs(best.timestamp - ts);
+  historyBuffer.forEach((snap) => {
+    const diff = Math.abs(snap.timestamp - ts);
+    if (diff < bestDiff) {
+      best = snap;
+      bestDiff = diff;
+    }
+  });
+  return best;
+}
+
 function applyDirective(shipId, directive = {}) {
   const id = String(shipId || "").toUpperCase();
   let changed = false;
@@ -272,7 +304,15 @@ function startSimulator(io, options = {}) {
   const tickMs = typeof options.tickMs === "number" ? options.tickMs : DEFAULT_TICK_MS;
 
   if (intervalHandle) {
-    return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones };
+    return {
+      stop: stopSimulator,
+      getFleetSnapshot,
+      applyDirective,
+      markShipsRerouting,
+      setRestrictedZones,
+      getPlaybackHistory,
+      getPlaybackSnapshotAt,
+    };
   }
 
   intervalHandle = setInterval(() => {
@@ -280,13 +320,26 @@ function startSimulator(io, options = {}) {
     const deltaSeconds = tickMs / 1000;
     fetchOpenMeteoWeather();
     fleetState = fleetState.map((ship) => updateShip({ ...ship }, deltaSeconds));
+    const snapshot = getFleetSnapshot();
+    if (snapshot.serverTime - lastHistoryAt >= HISTORY_INTERVAL_MS) {
+      addHistorySnapshot(snapshot);
+      lastHistoryAt = snapshot.serverTime;
+    }
 
     if (io) {
-      io.emit("fleet:update", getFleetSnapshot());
+      io.emit("fleet:update", snapshot);
     }
   }, tickMs);
 
-  return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting, setRestrictedZones };
+  return {
+    stop: stopSimulator,
+    getFleetSnapshot,
+    applyDirective,
+    markShipsRerouting,
+    setRestrictedZones,
+    getPlaybackHistory,
+    getPlaybackSnapshotAt,
+  };
 }
 
 fleetState = fleetState.map((ship) => {
@@ -310,5 +363,7 @@ module.exports = {
   applyDirective,
   markShipsRerouting,
   setRestrictedZones,
+  getPlaybackHistory,
+  getPlaybackSnapshotAt,
 };
 
