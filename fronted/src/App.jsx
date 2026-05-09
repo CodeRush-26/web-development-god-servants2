@@ -232,7 +232,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const fetchWeather = async () => {
+    const loadWeather = async () => {
       try {
         const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
         const res = await fetch(`${API_URL}/api/weather`);
