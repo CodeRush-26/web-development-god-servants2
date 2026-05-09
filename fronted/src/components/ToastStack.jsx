@@ -20,11 +20,12 @@ export default function ToastStack({ toasts }) {
           style={{
             minWidth: 260,
             maxWidth: 360,
-            background: "#0f172a",
+            background: "linear-gradient(180deg, #0f172a 0%, #111f37 100%)",
             color: "#f8fafc",
             borderRadius: 10,
             padding: "10px 12px",
-            boxShadow: "0 8px 24px rgba(2, 6, 23, 0.35)",
+            border: "1px solid rgba(148, 163, 184, 0.25)",
+            boxShadow: "0 10px 30px rgba(2, 6, 23, 0.38)",
           }}
         >
           <div style={{ fontWeight: 600, fontSize: 13 }}>{toast.title}</div>

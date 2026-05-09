@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import FleetMap from "../map/FleetMap";
 import ShipList from "../components/ShipList";
+import AlertPanel from "../alerts/AlertPanel";
 
 export default function CommandView({
   fleetData,
@@ -11,8 +12,19 @@ export default function CommandView({
   onSelectShip,
   onSendDirective,
   directiveResponses,
+  alerts,
+  zones,
+  isDrawingZone,
+  onStartDrawingZone,
+  onFinishDrawingZone,
+  onCancelDrawingZone,
+  onAddZone,
+  onRemoveZone,
+  onAcknowledgeAlert,
   onLogout,
 }) {
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const [form, setForm] = useState({
     type: "REROUTE",
     message: "",
@@ -27,58 +39,97 @@ export default function CommandView({
   );
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 320px", height: "100vh" }}>
-      <aside style={{ borderRight: "1px solid #dbe2ea", background: "#f8fafc" }}>
-        <ShipList ships={fleetData.ships} selectedShipId={selectedShipId} onSelectShip={onSelectShip} />
+    <div
+      className="app-grid-3"
+      style={{
+        gridTemplateColumns: `${leftCollapsed ? "54px" : "290px"} 1fr ${rightCollapsed ? "54px" : "340px"}`,
+        transition: "grid-template-columns 220ms ease",
+      }}
+    >
+      <aside className="panel panel-left" style={{ overflow: "hidden", position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setLeftCollapsed((v) => !v)}
+          className="panel-toggle-btn"
+          style={{ right: 8 }}
+          title={leftCollapsed ? "Expand fleet" : "Collapse fleet"}
+        >
+          {leftCollapsed ? ">" : "<"}
+        </button>
+        {!leftCollapsed ? (
+          <ShipList ships={fleetData.ships} selectedShipId={selectedShipId} onSelectShip={onSelectShip} />
+        ) : (
+          <div className="collapsed-label" style={{ padding: 10, writingMode: "vertical-rl" }}>
+            Fleet
+          </div>
+        )}
       </aside>
 
       <main style={{ minWidth: 0 }}>
-        <FleetMap fleetData={fleetData} selectedShipId={selectedShipId} onSelectShip={onSelectShip} />
+        <FleetMap
+          fleetData={fleetData}
+          selectedShipId={selectedShipId}
+          onSelectShip={onSelectShip}
+          zones={zones}
+          role="command"
+          isDrawingZone={isDrawingZone}
+          onStartDrawingZone={onStartDrawingZone}
+          onFinishDrawingZone={onFinishDrawingZone}
+          onCancelDrawingZone={onCancelDrawingZone}
+          onAddZone={onAddZone}
+          onRemoveZone={onRemoveZone}
+        />
       </main>
 
-      <aside style={{ borderLeft: "1px solid #dbe2ea", background: "#f8fafc", padding: 12, fontSize: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ margin: 0 }}>Command</h3>
-          <button type="button" onClick={onLogout} style={{ border: "1px solid #cbd5e1", borderRadius: 6 }}>
+      <aside className="panel panel-right" style={{ overflow: "hidden", position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setRightCollapsed((v) => !v)}
+          className="panel-toggle-btn"
+          style={{ left: 8 }}
+          title={rightCollapsed ? "Expand command panel" : "Collapse command panel"}
+        >
+          {rightCollapsed ? "<" : ">"}
+        </button>
+        {!rightCollapsed ? (
+          <>
+        <div className="panel-title-row" style={{ paddingLeft: 30 }}>
+          <h3 className="panel-title">Command</h3>
+          <button type="button" onClick={onLogout}>
             Logout
           </button>
         </div>
-        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+        <div className="chip-row">
           <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 999,
-              background: connectionState === "connected" ? "#dcfce7" : "#fee2e2",
-              color: connectionState === "connected" ? "#166534" : "#991b1b",
-            }}
+            className={`chip ${connectionState === "connected" ? "chip-ok" : "chip-bad"}`}
           >
             Socket: {connectionState}
           </span>
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e2e8f0", color: "#0f172a" }}>
+          <span className="chip">
             Tick: {fleetData.tick}
           </span>
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e2e8f0", color: "#0f172a" }}>
+          <span className="chip">
             Pending directives: {pendingDirectives.length}
           </span>
         </div>
-        <div style={{ margin: "8px 0 12px", color: "#475569", fontSize: 12 }}>
+        <div className="muted small" style={{ margin: "8px 0 12px" }}>
           Updated: {new Date(fleetData.serverTime).toLocaleTimeString()}
         </div>
 
         <h4 style={{ margin: "0 0 8px" }}>Fleet Status</h4>
-        <div style={{ marginBottom: 12, fontSize: 12, color: "#334155" }}>
+        <div className="small" style={{ marginBottom: 12, color: "#334155" }}>
           Normal {stats.normal || 0} | Rerouting {stats.rerouting || 0} | Distressed{" "}
           {stats.distressed || 0} | Stopped {stats.stopped || 0} | Arrived {stats.arrived || 0}
         </div>
 
         <h4 style={{ margin: "0 0 8px" }}>Send Directive</h4>
-        <div style={{ fontSize: 12, marginBottom: 8, color: "#64748b" }}>
+        <div className="muted small" style={{ marginBottom: 8 }}>
           Target: {selectedShip?.name || "Select a ship"}
         </div>
+        <div className="input-stack">
         <select
           value={form.type}
           onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
-          style={{ width: "100%", marginBottom: 8 }}
         >
           <option value="REROUTE">REROUTE</option>
           <option value="HOLD_POSITION">HOLD_POSITION</option>
@@ -88,7 +139,6 @@ export default function CommandView({
           placeholder="Directive message"
           value={form.message}
           onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
-          style={{ width: "100%", marginBottom: 8 }}
         />
         {form.type === "REROUTE" ? (
           <>
@@ -97,7 +147,6 @@ export default function CommandView({
               placeholder="Destination name"
               value={form.destinationName}
               onChange={(e) => setForm((f) => ({ ...f, destinationName: e.target.value }))}
-              style={{ width: "100%", marginBottom: 8 }}
             />
             <input
               type="number"
@@ -105,7 +154,6 @@ export default function CommandView({
               placeholder="Destination lat"
               value={form.destinationLat}
               onChange={(e) => setForm((f) => ({ ...f, destinationLat: e.target.value }))}
-              style={{ width: "100%", marginBottom: 8 }}
             />
             <input
               type="number"
@@ -113,10 +161,10 @@ export default function CommandView({
               placeholder="Destination lng"
               value={form.destinationLng}
               onChange={(e) => setForm((f) => ({ ...f, destinationLng: e.target.value }))}
-              style={{ width: "100%", marginBottom: 8 }}
             />
           </>
         ) : null}
+        </div>
         <button
           type="button"
           disabled={!selectedShip}
@@ -128,7 +176,8 @@ export default function CommandView({
             });
             setForm((f) => ({ ...f, message: "" }));
           }}
-          style={{ width: "100%", padding: "8px 10px" }}
+          className="btn-primary"
+          style={{ width: "100%" }}
         >
           Send directive
         </button>
@@ -144,6 +193,16 @@ export default function CommandView({
             </div>
           ))}
         </div>
+        <AlertPanel alerts={alerts} onAcknowledge={onAcknowledgeAlert} />
+          </>
+        ) : (
+          <div
+            className="collapsed-label"
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+          >
+            Command
+          </div>
+        )}
       </aside>
     </div>
   );

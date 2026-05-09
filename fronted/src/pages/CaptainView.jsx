@@ -7,6 +7,7 @@ export default function CaptainView({
   pendingDirective,
   hasRespondedToDirective,
   connectionState,
+  zones,
   onRespond,
   onLogout,
 }) {
@@ -21,37 +22,38 @@ export default function CaptainView({
   );
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", height: "100vh" }}>
+    <div className="app-grid-2">
       <main style={{ minWidth: 0 }}>
-        <FleetMap fleetData={singleFleetData} selectedShipId={shipId} onSelectShip={() => {}} />
+        <FleetMap
+          fleetData={singleFleetData}
+          selectedShipId={shipId}
+          onSelectShip={() => {}}
+          zones={zones}
+          role="captain"
+        />
       </main>
-      <aside style={{ borderLeft: "1px solid #dbe2ea", background: "#f8fafc", padding: 12, fontSize: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ margin: 0 }}>Captain</h3>
-          <button type="button" onClick={onLogout} style={{ border: "1px solid #cbd5e1", borderRadius: 6 }}>
+      <aside className="panel panel-right">
+        <div className="panel-title-row">
+          <h3 className="panel-title">Captain</h3>
+          <button type="button" onClick={onLogout}>
             Logout
           </button>
         </div>
-        <div style={{ margin: "8px 0 12px", color: "#475569" }}>
+        <div className="muted" style={{ margin: "8px 0 12px" }}>
           Ship: <strong>{ship?.name || shipId}</strong>
         </div>
-        <div style={{ marginBottom: 12, fontSize: 12 }}>
+        <div className="chip-row" style={{ marginBottom: 12 }}>
           <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 999,
-              background: connectionState === "connected" ? "#dcfce7" : "#fee2e2",
-              color: connectionState === "connected" ? "#166534" : "#991b1b",
-            }}
+            className={`chip ${connectionState === "connected" ? "chip-ok" : "chip-bad"}`}
           >
             Socket: {connectionState}
           </span>
         </div>
 
         {pendingDirective ? (
-          <div style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: 10 }}>
+          <div className="card">
             <h4 style={{ marginTop: 0 }}>Incoming Directive</h4>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Type: {pendingDirective.type}</div>
+            <div className="small muted" style={{ marginBottom: 4 }}>Type: {pendingDirective.type}</div>
             <div style={{ fontSize: 13, marginBottom: 8 }}>{pendingDirective.message || "(no message)"}</div>
             <button
               type="button"
@@ -65,7 +67,8 @@ export default function CaptainView({
                   directive: pendingDirective,
                 })
               }
-              style={{ width: "100%", marginBottom: 8, padding: "8px 10px" }}
+              className="btn-primary"
+              style={{ width: "100%", marginBottom: 8 }}
             >
               {hasRespondedToDirective ? "ACCEPTED" : "ACCEPT"}
             </button>
@@ -88,13 +91,14 @@ export default function CaptainView({
                   directive: pendingDirective,
                 })
               }
-              style={{ width: "100%", padding: "8px 10px" }}
+              className="btn-primary"
+              style={{ width: "100%" }}
             >
               {hasRespondedToDirective ? "RESPONSE SENT" : "ESCALATE_DISTRESS"}
             </button>
           </div>
         ) : (
-          <div style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: 10, color: "#64748b" }}>
+          <div className="card muted">
             No pending directives.
           </div>
         )}

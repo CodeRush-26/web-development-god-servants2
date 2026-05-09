@@ -24,6 +24,23 @@ let fleetState = initialFleet.map((s) => ({ ...s }));
 let tick = 0;
 let intervalHandle = null;
 
+// Central sea lane through Strait of Hormuz and Gulf of Oman.
+// Ships are constrained to stay near this lane (buffer in degrees).
+const SEA_LANE = [
+  { lat: 25.08, lng: 55.12 }, // Dubai approach
+  { lat: 25.32, lng: 55.55 },
+  { lat: 25.58, lng: 56.05 }, // Strait entry
+  { lat: 25.88, lng: 56.55 },
+  { lat: 26.03, lng: 57.05 }, // Strait core
+  { lat: 25.92, lng: 57.55 },
+  { lat: 25.72, lng: 58.15 },
+  { lat: 25.42, lng: 58.85 },
+  { lat: 25.10, lng: 59.55 },
+  { lat: 24.86, lng: 60.20 }, // Oman sea
+];
+
+const SEA_LANE_BUFFER_DEG = 0.09; // tighter lane ~10 km
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -34,6 +51,53 @@ function keepInBounds(ship) {
   if (ship.lat > BOUNDS.maxLat) ship.lat = BOUNDS.minLat;
   if (ship.lng < BOUNDS.minLng) ship.lng = BOUNDS.maxLng;
   if (ship.lng > BOUNDS.maxLng) ship.lng = BOUNDS.minLng;
+}
+
+function nearestPointOnSegment(p, a, b) {
+  const abLat = b.lat - a.lat;
+  const abLng = b.lng - a.lng;
+  const denom = abLat * abLat + abLng * abLng || 1e-12;
+  const t = ((p.lat - a.lat) * abLat + (p.lng - a.lng) * abLng) / denom;
+  const clampedT = clamp(t, 0, 1);
+  return {
+    lat: a.lat + abLat * clampedT,
+    lng: a.lng + abLng * clampedT,
+  };
+}
+
+function nearestPointOnSeaLane(lat, lng) {
+  const p = { lat, lng };
+  let best = SEA_LANE[0];
+  let bestD = Number.POSITIVE_INFINITY;
+
+  for (let i = 0; i < SEA_LANE.length - 1; i += 1) {
+    const cand = nearestPointOnSegment(p, SEA_LANE[i], SEA_LANE[i + 1]);
+    const d = (lat - cand.lat) ** 2 + (lng - cand.lng) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = cand;
+    }
+  }
+
+  return { point: best, distanceDeg: Math.sqrt(bestD) };
+}
+
+function isInWater(lat, lng) {
+  const { distanceDeg } = nearestPointOnSeaLane(lat, lng);
+  if (distanceDeg > SEA_LANE_BUFFER_DEG) return false;
+
+  // Extra coastal guards to avoid hugging Iranian/Omani land edges.
+  if (lng < 56.0 && lat > 25.65) return false;
+  if (lng >= 56.0 && lng <= 58.8 && lat > 26.12) return false;
+  if (lng > 58.8 && lat > 25.9) return false;
+
+  return true;
+}
+
+function snapToSeaLane(ship) {
+  const { point } = nearestPointOnSeaLane(ship.lat, ship.lng);
+  ship.lat = point.lat;
+  ship.lng = point.lng;
 }
 
 function updateShip(ship, deltaSeconds) {
@@ -89,6 +153,10 @@ function updateShip(ship, deltaSeconds) {
   ship.lng = next.lng;
 
   keepInBounds(ship);
+  if (!isInWater(ship.lat, ship.lng)) {
+    snapToSeaLane(ship);
+    ship.status = ship.status === "arrived" ? "arrived" : "rerouting";
+  }
   return ship;
 }
 
@@ -139,10 +207,29 @@ function applyDirective(shipId, directive = {}) {
   return changed;
 }
 
+function markShipsRerouting(shipIds = []) {
+  const idSet = new Set(shipIds.map((id) => String(id || "").toUpperCase()));
+  if (idSet.size === 0) return false;
+  let changed = false;
+
+  fleetState = fleetState.map((ship) => {
+    if (!idSet.has(String(ship.id || "").toUpperCase())) return ship;
+    if (ship.status !== "arrived" && ship.status !== "stopped") {
+      changed = true;
+      return { ...ship, status: "rerouting" };
+    }
+    return ship;
+  });
+
+  return changed;
+}
+
 function startSimulator(io, options = {}) {
   const tickMs = typeof options.tickMs === "number" ? options.tickMs : DEFAULT_TICK_MS;
 
-  if (intervalHandle) return { stop: stopSimulator, getFleetSnapshot, applyDirective };
+  if (intervalHandle) {
+    return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting };
+  }
 
   intervalHandle = setInterval(() => {
     tick += 1;
@@ -154,8 +241,16 @@ function startSimulator(io, options = {}) {
     }
   }, tickMs);
 
-  return { stop: stopSimulator, getFleetSnapshot, applyDirective };
+  return { stop: stopSimulator, getFleetSnapshot, applyDirective, markShipsRerouting };
 }
+
+fleetState = fleetState.map((ship) => {
+  const next = { ...ship };
+  if (!isInWater(next.lat, next.lng)) {
+    snapToSeaLane(next);
+  }
+  return next;
+});
 
 function stopSimulator() {
   if (!intervalHandle) return;
@@ -168,5 +263,6 @@ module.exports = {
   stopSimulator,
   getFleetSnapshot,
   applyDirective,
+  markShipsRerouting,
 };
 

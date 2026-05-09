@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import ZoneDrawer from "./ZoneDrawer";
 
 const MAP_CENTER = [25.9, 57.3];
 const TICK_MS = 1000;
@@ -44,17 +45,21 @@ function lerpShip(prev, next, t) {
 
 function shipIcon(heading, status, selected) {
   const color = statusColor(status);
-  const ringColor = selected ? "#ffffff" : "transparent";
+  const ringColor = selected ? "#f8fafc" : "transparent";
   return L.divIcon({
     className: "",
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    iconSize: [42, 42],
+    iconAnchor: [21, 21],
     html: `
-      <div style="position:relative; width:26px; height:26px;">
-        <div style="transform: rotate(${heading}deg); width:26px; height:26px; display:flex; align-items:center; justify-content:center;">
-          <div style="width:0; height:0; border-left:7px solid transparent; border-right:7px solid transparent; border-bottom:16px solid ${color}; filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));"></div>
+      <div style="position:relative; width:42px; height:42px;">
+        <div style="transform: rotate(${heading}deg); width:42px; height:42px; display:flex; align-items:center; justify-content:center;">
+          <div style="position:relative; width:22px; height:32px; filter: drop-shadow(0 3px 3px rgba(0,0,0,.35));">
+            <div style="position:absolute; left:0; right:0; top:2px; margin:auto; width:18px; height:26px; background:${color}; border-radius:10px 10px 6px 6px; clip-path: polygon(50% 0%, 90% 18%, 100% 75%, 50% 100%, 0% 75%, 10% 18%);"></div>
+            <div style="position:absolute; left:6px; top:8px; width:10px; height:8px; background:#dbeafe; border:1px solid rgba(255,255,255,.65); border-radius:3px;"></div>
+            <div style="position:absolute; left:9px; top:0px; width:4px; height:6px; background:#cbd5e1; border-radius:2px;"></div>
+          </div>
         </div>
-        <div style="position:absolute; inset:0; border-radius:50%; border:2px solid ${ringColor};"></div>
+        <div style="position:absolute; inset:2px; border-radius:50%; border:${selected ? 3 : 2}px solid ${ringColor}; box-shadow:${selected ? "0 0 0 2px rgba(37,99,235,.45)" : "none"};"></div>
       </div>
     `,
   });
@@ -82,7 +87,19 @@ function shipPopupHtml(ship) {
   `;
 }
 
-export default function FleetMap({ fleetData, selectedShipId, onSelectShip }) {
+export default function FleetMap({
+  fleetData,
+  selectedShipId,
+  onSelectShip,
+  zones = [],
+  role = "captain",
+  isDrawingZone = false,
+  onStartDrawingZone,
+  onFinishDrawingZone,
+  onCancelDrawingZone,
+  onAddZone,
+  onRemoveZone,
+}) {
   const ships = useMemo(() => {
     const raw = Array.isArray(fleetData?.ships) ? fleetData.ships : [];
     return raw
@@ -108,10 +125,18 @@ export default function FleetMap({ fleetData, selectedShipId, onSelectShip }) {
   const prevShipsRef = useRef(new Map());
   const nextShipsRef = useRef(new Map());
   const tickStartRef = useRef(performance.now());
+  const zoneLayerRef = useRef(new Map());
+  const drawPointsRef = useRef([]);
+  const drawLineRef = useRef(null);
+  const drawGuideLineRef = useRef(null);
+  const drawPointMarkersRef = useRef([]);
+  const [drawPointCount, setDrawPointCount] = useState(0);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = L.map(containerRef.current, { zoomControl: true }).setView(MAP_CENTER, 7);
+    map.createPane("drawPane");
+    map.getPane("drawPane").style.zIndex = "750";
     L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
       attribution:
         "Tiles &copy; Esri &mdash; Sources: Esri, HERE, Garmin, Intermap, increment P Corp., GEBCO, USGS",
@@ -122,6 +147,7 @@ export default function FleetMap({ fleetData, selectedShipId, onSelectShip }) {
       map.remove();
       mapRef.current = null;
       markerRef.current.clear();
+      zoneLayerRef.current.clear();
     };
   }, []);
 
@@ -182,12 +208,226 @@ export default function FleetMap({ fleetData, selectedShipId, onSelectShip }) {
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map) return;
+    const idsToKeep = new Set();
+
+    (Array.isArray(zones) ? zones : []).forEach((zone) => {
+      if (!zone?.id || !Array.isArray(zone?.coords) || zone.coords.length < 3) return;
+      const latlngs = zone.coords
+        .map((p) => [Number(p?.lat), Number(p?.lng)])
+        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+      if (latlngs.length < 3) return;
+
+      idsToKeep.add(zone.id);
+      let layer = zoneLayerRef.current.get(zone.id);
+      if (!layer) {
+        layer = L.polygon(latlngs, {
+          color: "#dc2626",
+          weight: 2,
+          dashArray: "6,6",
+          fillColor: "#ef4444",
+          fillOpacity: 0.15,
+        }).addTo(map);
+        if (role === "command") {
+          layer.on("click", () => {
+            if (!window.confirm(`Delete zone ${zone.id}?`)) return;
+            onRemoveZone?.(zone.id);
+          });
+        }
+        zoneLayerRef.current.set(zone.id, layer);
+      } else {
+        layer.setLatLngs(latlngs);
+      }
+    });
+
+    zoneLayerRef.current.forEach((layer, id) => {
+      if (!idsToKeep.has(id)) {
+        map.removeLayer(layer);
+        zoneLayerRef.current.delete(id);
+      }
+    });
+  }, [zones, role, onRemoveZone]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || role !== "command") return;
+
+    const refreshTempLine = () => {
+      const points = drawPointsRef.current;
+      if (drawLineRef.current) {
+        map.removeLayer(drawLineRef.current);
+        drawLineRef.current = null;
+      }
+      if (drawGuideLineRef.current) {
+        map.removeLayer(drawGuideLineRef.current);
+        drawGuideLineRef.current = null;
+      }
+      drawPointMarkersRef.current.forEach((marker) => map.removeLayer(marker));
+      drawPointMarkersRef.current = [];
+
+      points.forEach((p) => {
+        const marker = L.circleMarker([p.lat, p.lng], {
+          pane: "drawPane",
+          radius: 7,
+          color: "#1e3a8a",
+          fillColor: "#60a5fa",
+          fillOpacity: 1,
+          weight: 2,
+        }).addTo(map);
+        marker.bindTooltip(`P${drawPointMarkersRef.current.length + 1}`, {
+          permanent: true,
+          direction: "top",
+          offset: [0, -8],
+          className: "draw-point-label",
+          pane: "drawPane",
+        });
+        drawPointMarkersRef.current.push(marker);
+      });
+
+      if (points.length >= 1) {
+        drawLineRef.current = L.polyline(points, {
+          pane: "drawPane",
+          color: "#2563eb",
+          weight: 3,
+          dashArray: "4,4",
+        }).addTo(map);
+      }
+    };
+
+    const onMapClick = (e) => {
+      if (!isDrawingZone) return;
+      drawPointsRef.current.push({ lat: e.latlng.lat, lng: e.latlng.lng });
+      setDrawPointCount(drawPointsRef.current.length);
+      refreshTempLine();
+    };
+
+    const onMapMouseMove = (e) => {
+      if (!isDrawingZone) return;
+      const points = drawPointsRef.current;
+      if (points.length < 1) return;
+      const last = points[points.length - 1];
+      if (drawGuideLineRef.current) {
+        map.removeLayer(drawGuideLineRef.current);
+        drawGuideLineRef.current = null;
+      }
+      drawGuideLineRef.current = L.polyline(
+        [
+          [last.lat, last.lng],
+          [e.latlng.lat, e.latlng.lng],
+        ],
+        {
+          pane: "drawPane",
+          color: "#0ea5e9",
+          weight: 2,
+          dashArray: "3,5",
+        }
+      ).addTo(map);
+    };
+
+    map.on("click", onMapClick);
+    map.on("mousemove", onMapMouseMove);
+    return () => {
+      map.off("click", onMapClick);
+      map.off("mousemove", onMapMouseMove);
+      if (drawLineRef.current) {
+        map.removeLayer(drawLineRef.current);
+        drawLineRef.current = null;
+      }
+      if (drawGuideLineRef.current) {
+        map.removeLayer(drawGuideLineRef.current);
+        drawGuideLineRef.current = null;
+      }
+      drawPointMarkersRef.current.forEach((marker) => map.removeLayer(marker));
+      drawPointMarkersRef.current = [];
+    };
+  }, [isDrawingZone, onAddZone, onFinishDrawingZone, role]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map) {
+      if (isDrawingZone) {
+        map.dragging.disable();
+        map.doubleClickZoom.disable();
+        map.getContainer().style.cursor = "crosshair";
+      } else {
+        map.dragging.enable();
+        map.doubleClickZoom.enable();
+        map.getContainer().style.cursor = "";
+      }
+    }
+
+    if (!isDrawingZone) {
+      drawPointsRef.current = [];
+      setDrawPointCount(0);
+      if (drawLineRef.current && map) {
+        map.removeLayer(drawLineRef.current);
+        drawLineRef.current = null;
+      }
+      if (drawGuideLineRef.current && map) {
+        map.removeLayer(drawGuideLineRef.current);
+        drawGuideLineRef.current = null;
+      }
+      if (map) {
+        drawPointMarkersRef.current.forEach((marker) => map.removeLayer(marker));
+      }
+      drawPointMarkersRef.current = [];
+    }
+  }, [isDrawingZone]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !selectedShipId) return;
     const selected = nextShipsRef.current.get(selectedShipId);
     if (!selected || !Number.isFinite(selected.lat) || !Number.isFinite(selected.lng)) return;
     map.flyTo([selected.lat, selected.lng], Math.max(map.getZoom(), 8), { duration: 0.8 });
   }, [selectedShipId]);
 
-  return <div ref={containerRef} style={{ height: "100vh", width: "100%" }} />;
+  return (
+    <div style={{ position: "relative", height: "100vh", width: "100%" }}>
+      <div ref={containerRef} style={{ height: "100vh", width: "100%" }} />
+      <ZoneDrawer
+        role={role}
+        isDrawingZone={isDrawingZone}
+        drawPointsCount={drawPointCount}
+        onStartDrawing={onStartDrawingZone}
+        onFinishDrawing={() => {
+          const points = drawPointsRef.current;
+          if (points.length >= 3) onAddZone?.(points);
+          drawPointsRef.current = [];
+          setDrawPointCount(0);
+          if (drawLineRef.current && mapRef.current) {
+            mapRef.current.removeLayer(drawLineRef.current);
+            drawLineRef.current = null;
+          }
+          if (drawGuideLineRef.current && mapRef.current) {
+            mapRef.current.removeLayer(drawGuideLineRef.current);
+            drawGuideLineRef.current = null;
+          }
+          if (mapRef.current) {
+            drawPointMarkersRef.current.forEach((marker) => mapRef.current.removeLayer(marker));
+          }
+          drawPointMarkersRef.current = [];
+          onFinishDrawingZone?.();
+        }}
+        onCancelDrawing={() => {
+          drawPointsRef.current = [];
+          setDrawPointCount(0);
+          onCancelDrawingZone?.();
+          if (drawLineRef.current && mapRef.current) {
+            mapRef.current.removeLayer(drawLineRef.current);
+            drawLineRef.current = null;
+          }
+          if (drawGuideLineRef.current && mapRef.current) {
+            mapRef.current.removeLayer(drawGuideLineRef.current);
+            drawGuideLineRef.current = null;
+          }
+          if (mapRef.current) {
+            drawPointMarkersRef.current.forEach((marker) => mapRef.current.removeLayer(marker));
+          }
+          drawPointMarkersRef.current = [];
+        }}
+      />
+    </div>
+  );
 }
 

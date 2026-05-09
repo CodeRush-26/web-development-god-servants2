@@ -71,10 +71,30 @@ export default function App() {
   const [selectedShipId, setSelectedShipId] = useState(null);
   const [pendingDirectives, setPendingDirectives] = useState([]);
   const [directiveResponses, setDirectiveResponses] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [isDrawingZone, setIsDrawingZone] = useState(false);
   const [connectionState, setConnectionState] = useState("connecting");
   const [toasts, setToasts] = useState([]);
 
   useEffect(() => {
+    const beep = () => {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.value = 0.06;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } catch {
+        // Audio may be blocked before first user interaction.
+      }
+    };
+
     const pushToast = (title, message) => {
       const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       setToasts((prev) => [{ id, title, message }, ...prev].slice(0, 5));
@@ -117,6 +137,30 @@ export default function App() {
       setPendingDirectives((prev) => mergeUniqueById(prev, incomingPending).slice(0, 100));
       setDirectiveResponses((prev) => mergeUniqueById(prev, incomingResponses).slice(0, 100));
     });
+    socket.on("zone:sync", (payload) => {
+      setZones(Array.isArray(payload?.zones) ? payload.zones : []);
+    });
+    socket.on("zone:added", (zone) => {
+      setZones((prev) => mergeUniqueById(prev, [zone]).slice(0, 50));
+      pushToast("Zone added", zone.id);
+    });
+    socket.on("zone:removed", ({ zoneId }) => {
+      setZones((prev) => prev.filter((z) => z.id !== zoneId));
+      pushToast("Zone removed", zoneId);
+    });
+    socket.on("alert:sync", (payload) => {
+      setAlerts(Array.isArray(payload?.alerts) ? payload.alerts : []);
+    });
+    socket.on("alert:new", (alert) => {
+      setAlerts((prev) => mergeUniqueById(prev, [alert]).slice(0, 300));
+      pushToast("Geofence breach", `${alert.shipId} entered ${alert.zoneId}`);
+      beep();
+    });
+    socket.on("alert:acked", ({ alertId, acknowledgedAt }) => {
+      setAlerts((prev) =>
+        prev.map((a) => (a.id === alertId ? { ...a, acknowledged: true, acknowledgedAt } : a))
+      );
+    });
     socket.on("directive:response", (response) => {
       setDirectiveResponses((prev) => mergeUniqueById(prev, [response]).slice(0, 100));
       setPendingDirectives((prev) =>
@@ -132,6 +176,12 @@ export default function App() {
       socket.off("directive:sent");
       socket.off("directive:sync");
       socket.off("directive:response");
+      socket.off("zone:sync");
+      socket.off("zone:added");
+      socket.off("zone:removed");
+      socket.off("alert:sync");
+      socket.off("alert:new");
+      socket.off("alert:acked");
     };
   }, []);
 
@@ -179,6 +229,7 @@ export default function App() {
           pendingDirective={pendingDirective}
           hasRespondedToDirective={hasRespondedToDirective}
           connectionState={connectionState}
+          zones={zones}
           onRespond={(payload) => socket.emit("directive:response", payload)}
           onLogout={() => {
             setSession(null);
@@ -198,6 +249,19 @@ export default function App() {
         stats={stats}
         connectionState={connectionState}
         pendingDirectives={pendingDirectives}
+        zones={zones}
+        alerts={alerts}
+        isDrawingZone={isDrawingZone}
+        onStartDrawingZone={() => setIsDrawingZone(true)}
+        onFinishDrawingZone={() => setIsDrawingZone(false)}
+        onCancelDrawingZone={() => setIsDrawingZone(false)}
+        onAddZone={(coords) =>
+          socket.emit("zone:add", {
+            coords,
+          })
+        }
+        onRemoveZone={(zoneId) => socket.emit("zone:remove", { zoneId })}
+        onAcknowledgeAlert={(alertId) => socket.emit("alert:ack", { alertId })}
         selectedShipId={selectedShipId}
         onSelectShip={setSelectedShipId}
         selectedShip={selectedShip}

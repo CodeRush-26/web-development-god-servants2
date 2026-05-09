@@ -17,9 +17,9 @@ function statusColor(status) {
 
 export default function ShipList({ ships, selectedShipId, onSelectShip }) {
   return (
-    <div style={{ padding: 12 }}>
+    <div className="fleet-wrap">
       <h3 style={{ marginTop: 0, marginBottom: 10 }}>Fleet</h3>
-      <div style={{ maxHeight: "calc(100vh - 120px)", overflowY: "auto" }}>
+      <div className="fleet-scroll">
         {ships.map((ship) => {
           const active = ship.id === selectedShipId;
           return (
@@ -27,28 +27,11 @@ export default function ShipList({ ships, selectedShipId, onSelectShip }) {
               type="button"
               key={ship.id}
               onClick={() => onSelectShip?.(ship.id)}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                textAlign: "left",
-                border: active ? "1px solid #2563eb" : "1px solid #e5e7eb",
-                background: active ? "#eff6ff" : "#fff",
-                borderRadius: 8,
-                padding: "8px 10px",
-                marginBottom: 8,
-                cursor: "pointer",
-              }}
+              className={`ship-row${active ? " active" : ""}`}
             >
               <span
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: "50%",
-                  background: statusColor(ship.status),
-                  flex: "0 0 auto",
-                }}
+                className="ship-dot"
+                style={{ background: statusColor(ship.status) }}
               />
               <span style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{ship.name}</div>
