@@ -30,7 +30,7 @@ const io = new Server(server, {
 });
 
 const simulator = startSimulator(io);
-initSocket(io, simulator.getFleetSnapshot);
+initSocket(io, simulator.getFleetSnapshot, simulator.applyDirective);
 
 app.use("/api/ships", createShipsRouter(simulator.getFleetSnapshot));
 

@@ -100,10 +100,49 @@ function getFleetSnapshot() {
   };
 }
 
+function applyDirective(shipId, directive = {}) {
+  const id = String(shipId || "").toUpperCase();
+  let changed = false;
+
+  fleetState = fleetState.map((ship) => {
+    if (ship.id !== id) return ship;
+    changed = true;
+
+    const next = { ...ship };
+    const action = String(directive.action || directive.type || "").toUpperCase();
+
+    if (action === "HOLD_POSITION") {
+      next.status = "stopped";
+      next.speed = 0;
+      return next;
+    }
+
+    if (action === "REROUTE") {
+      const destinationLat = Number(directive.destinationLat);
+      const destinationLng = Number(directive.destinationLng);
+      if (Number.isFinite(destinationLat) && Number.isFinite(destinationLng)) {
+        next.destinationLat = destinationLat;
+        next.destinationLng = destinationLng;
+      }
+      if (directive.destinationName) {
+        next.destination = String(directive.destinationName);
+      }
+      if (next.status === "stopped") {
+        next.speed = 10;
+      }
+      next.status = "rerouting";
+    }
+
+    return next;
+  });
+
+  return changed;
+}
+
 function startSimulator(io, options = {}) {
   const tickMs = typeof options.tickMs === "number" ? options.tickMs : DEFAULT_TICK_MS;
 
-  if (intervalHandle) return { stop: stopSimulator, getFleetSnapshot };
+  if (intervalHandle) return { stop: stopSimulator, getFleetSnapshot, applyDirective };
 
   intervalHandle = setInterval(() => {
     tick += 1;
@@ -115,7 +154,7 @@ function startSimulator(io, options = {}) {
     }
   }, tickMs);
 
-  return { stop: stopSimulator, getFleetSnapshot };
+  return { stop: stopSimulator, getFleetSnapshot, applyDirective };
 }
 
 function stopSimulator() {
@@ -128,5 +167,6 @@ module.exports = {
   startSimulator,
   stopSimulator,
   getFleetSnapshot,
+  applyDirective,
 };
 

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import socket from "./socket";
-import FleetMap from "./map/FleetMap";
-import ShipList from "./components/ShipList";
+import Login from "./pages/Login";
+import CommandView from "./pages/CommandView";
+import CaptainView from "./pages/CaptainView";
+import ToastStack from "./components/ToastStack";
 
 function sanitizeShip(raw, index = 0) {
   const lat = Number(raw?.lat);
@@ -46,44 +48,90 @@ function countByStatus(ships) {
   );
 }
 
+function mergeUniqueById(existing, incoming) {
+  const map = new Map(existing.map((item) => [item.id, item]));
+  incoming.forEach((item) => {
+    if (!item?.id) return;
+    map.set(item.id, item);
+  });
+  return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
 export default function App() {
+  const [session, setSession] = useState(() => {
+    const role = localStorage.getItem("role");
+    const shipId = localStorage.getItem("shipId");
+    return role ? { role, shipId } : null;
+  });
   const [fleetData, setFleetData] = useState({
     ships: [],
     tick: 0,
     serverTime: Date.now(),
   });
   const [selectedShipId, setSelectedShipId] = useState(null);
+  const [pendingDirectives, setPendingDirectives] = useState([]);
+  const [directiveResponses, setDirectiveResponses] = useState([]);
+  const [connectionState, setConnectionState] = useState("connecting");
+  const [toasts, setToasts] = useState([]);
 
   useEffect(() => {
+    const pushToast = (title, message) => {
+      const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [{ id, title, message }, ...prev].slice(0, 5));
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 3500);
+    };
+
     const onFleetUpdate = (payload) => {
       const sanitized = sanitizeFleetPayload(payload);
       setFleetData(sanitized);
       setSelectedShipId((current) => current || sanitized.ships[0]?.id || null);
     };
-
-    const pullSnapshot = async () => {
-      try {
-        const res = await fetch("http://localhost:4000/api/ships");
-        if (!res.ok) return;
-        const payload = await res.json();
-        onFleetUpdate(payload);
-      } catch {
-        // ignore transient backend/network errors; socket may still recover
-      }
+    const onConnect = () => {
+      setConnectionState("connected");
+      pushToast("Connected", "Live fleet feed is active.");
+    };
+    const onDisconnect = () => {
+      setConnectionState("disconnected");
+      pushToast("Disconnected", "Trying to reconnect to backend.");
     };
 
-    pullSnapshot();
-    const pollId = setInterval(pullSnapshot, 2000);
-
     socket.on("fleet:update", onFleetUpdate);
-    socket.on("connect_error", () => {
-      pullSnapshot();
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("directive:sent", (directive) => {
+      setPendingDirectives((prev) => mergeUniqueById(prev, [directive]).slice(0, 100));
+      pushToast(
+        "Directive sent",
+        `${directive.type} for ${directive.shipId}${directive.message ? `: ${directive.message}` : ""}`
+      );
+    });
+    socket.on("directive:sync", (snapshot) => {
+      const incomingPending = Array.isArray(snapshot?.pendingDirectives)
+        ? snapshot.pendingDirectives
+        : [];
+      const incomingResponses = Array.isArray(snapshot?.directiveResponses)
+        ? snapshot.directiveResponses
+        : [];
+      setPendingDirectives((prev) => mergeUniqueById(prev, incomingPending).slice(0, 100));
+      setDirectiveResponses((prev) => mergeUniqueById(prev, incomingResponses).slice(0, 100));
+    });
+    socket.on("directive:response", (response) => {
+      setDirectiveResponses((prev) => mergeUniqueById(prev, [response]).slice(0, 100));
+      setPendingDirectives((prev) =>
+        prev.filter((d) => d.id !== response.directiveId)
+      );
+      pushToast("Captain response", `${response.shipId}: ${response.action}`);
     });
 
     return () => {
-      clearInterval(pollId);
       socket.off("fleet:update", onFleetUpdate);
-      socket.off("connect_error");
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("directive:sent");
+      socket.off("directive:sync");
+      socket.off("directive:response");
     };
   }, []);
 
@@ -93,69 +141,83 @@ export default function App() {
     [fleetData.ships, selectedShipId]
   );
 
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "280px 1fr 280px",
-        height: "100vh",
-        fontFamily: "Inter, system-ui, sans-serif",
-      }}
-    >
-      <aside style={{ borderRight: "1px solid #dbe2ea", background: "#f8fafc" }}>
-        <ShipList
+  if (!session?.role) {
+    return (
+      <>
+        <Login
           ships={fleetData.ships}
-          selectedShipId={selectedShipId}
-          onSelectShip={setSelectedShipId}
+          onLogin={({ role, shipId }) => {
+            const next = { role, shipId: shipId || null };
+            setSession(next);
+            localStorage.setItem("role", next.role);
+            if (next.shipId) localStorage.setItem("shipId", next.shipId);
+            if (next.role === "command" && fleetData.ships[0]?.id) {
+              setSelectedShipId(fleetData.ships[0].id);
+            } else {
+              setSelectedShipId(next.shipId || null);
+            }
+          }}
         />
-      </aside>
+        <ToastStack toasts={toasts} />
+      </>
+    );
+  }
 
-      <main style={{ minWidth: 0 }}>
-        <FleetMap
+  if (session.role === "captain") {
+    const shipId = session.shipId || fleetData.ships[0]?.id || null;
+    const pendingDirective =
+      pendingDirectives.find((d) => d.shipId === shipId) || null;
+    const hasRespondedToDirective = pendingDirective
+      ? directiveResponses.some((r) => r.directiveId === pendingDirective.id)
+      : false;
+
+    return (
+      <>
+        <CaptainView
           fleetData={fleetData}
-          selectedShipId={selectedShipId}
-          onSelectShip={setSelectedShipId}
+          shipId={shipId}
+          pendingDirective={pendingDirective}
+          hasRespondedToDirective={hasRespondedToDirective}
+          connectionState={connectionState}
+          onRespond={(payload) => socket.emit("directive:response", payload)}
+          onLogout={() => {
+            setSession(null);
+            localStorage.removeItem("role");
+            localStorage.removeItem("shipId");
+          }}
         />
-      </main>
+        <ToastStack toasts={toasts} />
+      </>
+    );
+  }
 
-      <aside
-        style={{
-          borderLeft: "1px solid #dbe2ea",
-          background: "#f8fafc",
-          padding: 12,
-          fontSize: 14,
+  return (
+    <>
+      <CommandView
+        fleetData={fleetData}
+        stats={stats}
+        connectionState={connectionState}
+        pendingDirectives={pendingDirectives}
+        selectedShipId={selectedShipId}
+        onSelectShip={setSelectedShipId}
+        selectedShip={selectedShip}
+        onSendDirective={(directive) =>
+          socket.emit("directive:send", {
+            ...directive,
+            from: "command",
+            destinationLat: directive.destinationLat === "" ? undefined : Number(directive.destinationLat),
+            destinationLng: directive.destinationLng === "" ? undefined : Number(directive.destinationLng),
+          })
+        }
+        directiveResponses={directiveResponses}
+        onLogout={() => {
+          setSession(null);
+          localStorage.removeItem("role");
+          localStorage.removeItem("shipId");
         }}
-      >
-        <h3 style={{ marginTop: 0 }}>Command</h3>
-        <div style={{ marginBottom: 8 }}>Tick: {fleetData.tick}</div>
-        <div style={{ marginBottom: 12 }}>
-          Updated: {new Date(fleetData.serverTime).toLocaleTimeString()}
-        </div>
-
-        <h4 style={{ margin: "0 0 8px" }}>Fleet Status</h4>
-        <div>Normal: {stats.normal || 0}</div>
-        <div>Rerouting: {stats.rerouting || 0}</div>
-        <div>Distressed: {stats.distressed || 0}</div>
-        <div>Stopped: {stats.stopped || 0}</div>
-        <div>Arrived: {stats.arrived || 0}</div>
-
-        <h4 style={{ margin: "16px 0 8px" }}>Active Ship</h4>
-        {selectedShip ? (
-          <div style={{ lineHeight: 1.5 }}>
-            <div>
-              <strong>{selectedShip.name}</strong>
-            </div>
-            <div>{selectedShip.id}</div>
-            <div>Speed: {selectedShip.speed} kn</div>
-            <div>Heading: {Math.round(selectedShip.heading)}°</div>
-            <div>Fuel: {Number(selectedShip.fuel ?? 0).toFixed(1)}%</div>
-            <div>Status: {selectedShip.status}</div>
-          </div>
-        ) : (
-          <div>No ship selected</div>
-        )}
-      </aside>
-    </div>
+      />
+      <ToastStack toasts={toasts} />
+    </>
   );
 }
 
