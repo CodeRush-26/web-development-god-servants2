@@ -1,7 +1,9 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
+const mongoose = require("mongoose");
 
 const { initSocket } = require("./socket");
 const { createShipsRouter } = require("./routes/ships");
@@ -48,6 +50,11 @@ app.use(
   "/api/playback",
   createPlaybackRouter(simulator.getPlaybackHistory, simulator.getPlaybackSnapshotAt)
 );
+
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("Connected to MongoDB Atlas"))
+  .catch((err) => console.error("Error connecting to MongoDB Atlas:", err));
 
 server.listen(PORT, () => {
   console.log(`Server running, simulator started on port ${PORT}`);
